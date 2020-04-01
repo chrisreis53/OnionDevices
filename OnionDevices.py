@@ -28,7 +28,6 @@ class BME280(object):
         self.dig_P8 = 0
         self.dig_P9 = 0
 
-
     def initialize(self):
         """
         Get intial Values from BME280
@@ -160,16 +159,146 @@ class BME280(object):
             humidity = 0.0
 
         return pressure, humidity, cTemp
+
+class BMP180(object):
+    """docstring for BMP180."""
+
+    def __init__(self, i2c):
+        super(BMP180, self).__init__()
+        self.I2C = i2c
+        self.AC1 = 0
+        self.AC2 = 0
+        self.AC3 = 0
+        self.AC4 = 0
+        self.AC5 = 0
+        self.AC6 = 0
+        self.B1 = 0
+        self.B2 = 0
+        self.MB = 0
+        self.MC = 0
+        self.MD = 0
+
+    def initialize(self):
+        # BMP180 address, 0x77(119)
+        # Read data back from 0xAA(170), 22 bytes
+        data = self.I2C.readBytes(0x77, 0xAA, 22)
+
+        # Convert the data
+        self.AC1 = data[0] * 256 + data[1]
+        if self.AC1 > 32767 :
+        	self.AC1 -= 65535
+        self.AC2 = data[2] * 256 + data[3]
+        if self.AC2 > 32767 :
+        	self.AC2 -= 65535
+        self.AC3 = data[4] * 256 + data[5]
+        if self.AC3 > 32767 :
+        	self.AC3 -= 65535
+        self.AC4 = data[6] * 256 + data[7]
+        self.AC5 = data[8] * 256 + data[9]
+        self.AC6 = data[10] * 256 + data[11]
+        self.B1 = data[12] * 256 + data[13]
+        if self.B1 > 32767 :
+        	self.B1 -= 65535
+        self.B2 = data[14] * 256 + data[15]
+        if self.B2 > 32767 :
+        	self.B2 -= 65535
+        self.MB = data[16] * 256 + data[17]
+        if self.MB > 32767 :
+        	self.MB -= 65535
+        self.MC = data[18] * 256 + data[19]
+        if self.MC > 32767 :
+        	self.MC -= 65535
+        self.MD = data[20] * 256 + data[21]
+        if self.MD > 32767 :
+        	self.MD -= 65535
+        pass
+
+    def get_measurements(self):
+        # BMP180 address, 0x77(119)
+        # Select measurement control register, 0xF4(244)
+        #		0x2E(46)	Enable temperature measurement
+        self.I2C.writeByte(0x77, 0xF4, 0x2E)
+
+        time.sleep(0.5)
+        # BMP180 address, 0x77(119)
+        # Read data back from 0xF6(246), 2 bytes
+        # temp MSB, temp LSB
+        data = self.I2C.readBytes(0x77, 0xF6, 2)
+
+        # Convert the data
+        temp = data[0] * 256 + data[1]
+
+        # Callibration for Temperature
+        X1 = (temp - self.AC6) * self.AC5 / 32768.0
+        X2 = (self.MC * 2048.0) / (X1 + self.MD)
+        B5 = X1 + X2
+        cTemp = ((B5 + 8.0) / 16.0) / 10.0
+
+        time.sleep(0.5)
+        # BMP180 address, 0x77(119)
+        # Select measurement control register, 0xF4(244)
+        #		0x74(116)	Enable pressure measurement, OSS = 1
+        self.I2C.writeByte(0x77, 0xF4, 0x74)
+
+        time.sleep(0.5)
+        # BMP180 address, 0x77(119)
+        # Read data back from 0xF6(246), 3 bytes
+        # pres MSB1, pres MSB, pres LSB
+        data = self.I2C.readBytes(0x77, 0xF6, 3)
+
+        # Convert the data
+        pres = ((data[0] * 65536) + (data[1] * 256) + data[2]) / 128
+
+        # Calibration for Pressure
+        B6 = B5 - 4000
+        X1 = (self.B2 * (B6 * B6 / 4096.0)) / 2048.0
+        X2 = self.AC2 * B6 / 2048.0
+        X3 = X1 + X2
+        B3 = (((self.AC1 * 4 + X3) * 2) + 2) / 4.0
+        X1 = self.AC3 * B6 / 8192.0
+        X2 = (self.B1 * (B6 * B6 / 2048.0)) / 65536.0
+        X3 = ((X1 + X2) + 2) / 4.0
+        B4 = self.AC4 * (X3 + 32768) / 32768.0
+        B7 = ((pres - B3) * (25000.0))
+        pressure = 0.0
+        if B7 < 2147483648L :
+        	pressure = (B7 * 2) / B4
+        else :
+        	pressure = (B7 / B4) * 2
+        X1 = (pressure / 256.0) * (pressure / 256.0)
+        X1 = (X1 * 3038.0) / 65536.0
+        X2 = ((-7357) * pressure) / 65536.0
+        pressure = (pressure + (X1 + X2 + 3791) / 16.0) / 100
+
+        # Calculate Altitude
+        altitude = 44330 * (1 - ((pressure / 1013.25) ** 0.1903))
+
+        return pressure, altitude, cTemp
+
+
 if __name__ == '__main__':
-        i2c = onionI2C.OnionI2C()
-        dev1 = BME280(i2c)
+    i2c = onionI2C.OnionI2C()
+    dev1 = BME280(i2c)
+    dev2 = BMP180(i2c)
 
-        dev1.initialize()
+    dev1.initialize()
+    dev2.initialize()
 
-        for x in range(0,10):
-            pressure, humidity, cTemp = dev1.get_measurements()
-            print "Pressure : %.2f hPa " %pressure
-            print "Relative Humidity : %.2f %%" %humidity
-            print "Temperature in Celsius : %.2f C" %cTemp
-            time.sleep(1)
-            pass
+    time.sleep(1)
+
+    for x in range(0,10):
+        print "//////////////////////////////////////////"
+        pressure, humidity, cTemp = dev1.get_measurements()
+        print "BME280"
+        print "Pressure : %.2f hPa " %pressure
+        print "Relative Humidity : %.2f %%" %humidity
+        print "Temperature in Celsius : %.2f C" %cTemp
+        time.sleep(.25)
+        pressure, altitude, cTemp = dev2.get_measurements()
+        print "BMP180"
+        print "Pressure : %.2f hPa " %pressure
+        print "Altitude : %.2f m" %altitude
+        print "Temperature in Celsius : %.2f C" %cTemp
+
+        time.sleep(1)
+        pass
